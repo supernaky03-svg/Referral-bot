@@ -316,6 +316,22 @@ MDV2_ESCAPE_RE = re.compile(r"([_\*\[\]\(\)~`>#+\-=|{}\.!])")
 def format_ks(amount: int) -> str:
     return f"{amount:,}"
 
+def compact_ks(value: int | float) -> str:
+    n = float(value)
+
+    if n >= 1_000_000_000:
+        text = f"{n / 1_000_000_000:.2f}".rstrip("0").rstrip(".")
+        return f"{text}B"
+    if n >= 1_000_000:
+        text = f"{n / 1_000_000:.2f}".rstrip("0").rstrip(".")
+        return f"{text}M"
+    if n >= 1_000:
+        text = f"{n / 1_000:.2f}".rstrip("0").rstrip(".")
+        return f"{text}K"
+
+    return str(int(n))
+
+
 
 def escape_markdown_v2(text: Any) -> str:
     return MDV2_ESCAPE_RE.sub(r"\\\1", str(text or ""))
@@ -808,14 +824,18 @@ async def admin_stats(message: Message) -> None:
         "SELECT COALESCE(SUM(balance), 0) FROM users"
     )
 
+    total_balance = int(total_balance or 0)
+
     text = (
         "📊 Bot Stats\n\n"
         f"👤 Total Users: {total_users}\n"
         f"✅ Verified Users: {verified_users}\n"
         f"👥 Referred Users: {referred_users}\n"
-        f"💰 Total Balance In System: {total_balance} Ks"
+        f"💰 Total Balance In System: {compact_ks(total_balance)} Ks"
     )
     await message.answer(text)
+
+
     
 # ============================================================
 # MENU HANDLERS
