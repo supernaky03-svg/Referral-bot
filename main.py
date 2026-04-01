@@ -791,7 +791,32 @@ async def no_url_channel_callback(callback: CallbackQuery) -> None:
         show_alert=True,
     )
 
+@router.message(Command("stats"))
+async def admin_stats(message: Message) -> None:
+    if not message.from_user or not is_admin(message.from_user.id):
+        await message.answer("❌ ဒီ command ကို Admin များသာ အသုံးပြုနိုင်ပါသည်။")
+        return
 
+    total_users = await get_pool().fetchval("SELECT COUNT(*) FROM users")
+    verified_users = await get_pool().fetchval(
+        "SELECT COUNT(*) FROM users WHERE is_join_verified = TRUE"
+    )
+    referred_users = await get_pool().fetchval(
+        "SELECT COUNT(*) FROM users WHERE invited_by IS NOT NULL"
+    )
+    total_balance = await get_pool().fetchval(
+        "SELECT COALESCE(SUM(balance), 0) FROM users"
+    )
+
+    text = (
+        "📊 Bot Stats\n\n"
+        f"👤 Total Users: {total_users}\n"
+        f"✅ Verified Users: {verified_users}\n"
+        f"👥 Referred Users: {referred_users}\n"
+        f"💰 Total Balance In System: {total_balance} Ks"
+    )
+    await message.answer(text)
+    
 # ============================================================
 # MENU HANDLERS
 # ============================================================
