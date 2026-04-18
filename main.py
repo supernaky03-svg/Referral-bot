@@ -398,8 +398,8 @@ def build_referral_link(user_id: int) -> str:
 def main_menu_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text=" ငွေစာရင်း"), KeyboardButton(text=" သူငယ်ချင်းဖိတ်မယ်")],
-            [KeyboardButton(text=" ငွေထုတ်မယ်"), KeyboardButton(text=" အကူအညီ")],
+            [KeyboardButton(text="ငွေစာရင်း"), KeyboardButton(text="သူငယ်ချင်းဖိတ်မယ်")],
+            [KeyboardButton(text="ငွေထုတ်မယ်"), KeyboardButton(text="အကူအညီ")],
         ],
         resize_keyboard=True,
     )
