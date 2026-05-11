@@ -871,7 +871,262 @@ async def admin_stats(message: Message) -> None:
     )
     await message.answer(text)
 
+# ============================================================
+# ADMIN USER / BALANCE / BROADCAST COMMANDS
+# ============================================================
 
+async def add_manual_balance(user_id: int, amount: int) -> Optional[int]:
+    row = await get_pool().fetchrow(
+        """
+        UPDATE users
+        SET balance = balance + $2
+        WHERE user_id = $1
+        RETURNING balance
+        """,
+        user_id,
+        amount,
+    )
+    return None if not row else int(row["balance"])
+
+
+async def remove_manual_balance(user_id: int, amount: int) -> tuple[str, Optional[int]]:
+    async with get_pool().acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                "SELECT balance FROM users WHERE user_id = $1 FOR UPDATE",
+                user_id,
+            )
+            if not row:
+                return "not_found", None
+
+            current_balance = int(row["balance"])
+            if current_balance < amount:
+                return "insufficient", current_balance
+
+            updated = await conn.fetchrow(
+                """
+                UPDATE users
+                SET balance = balance - $2
+                WHERE user_id = $1
+                RETURNING balance
+                """,
+                user_id,
+                amount,
+            )
+            return "ok", int(updated["balance"])
+
+
+@router.message(Command("userinfo"))
+async def admin_userinfo(message: Message) -> None:
+    if not message.from_user or not is_admin(message.from_user.id):
+        await message.answer("❌ ဒီ command ကို Admin များသာ အသုံးပြုနိုင်ပါသည်။")
+        return
+
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer("အသုံးပြုပုံ: /userinfo <user_id>")
+        return
+
+    try:
+        user_id = int(parts[1].strip())
+    except ValueError:
+        await message.answer("❌ user_id မှန်ကန်သော number ဖြစ်ရပါမည်။")
+        return
+
+    user = await get_user(user_id)
+    if not user:
+        await message.answer("❌ User မတွေ့ပါ။")
+        return
+
+    inviter_text = "မရှိပါ"
+    invited_by = user["invited_by"]
+    if invited_by:
+        inviter = await get_user(int(invited_by))
+        if inviter:
+            inviter_name = inviter["full_name"] or "Unknown"
+            inviter_username = f"@{inviter['username']}" if inviter["username"] else "username မရှိပါ"
+            inviter_text = f"{invited_by} | {inviter_name} | {inviter_username}"
+        else:
+            inviter_text = str(invited_by)
+
+    username = f"@{user['username']}" if user["username"] else "မရှိပါ"
+    created_at = user["created_at"].strftime("%Y-%m-%d %H:%M:%S") if user["created_at"] else "Unknown"
+
+    text = (
+        "👤 User Info\n\n"
+        f"User ID: {user['user_id']}\n"
+        f"Name: {user['full_name'] or 'Unknown'}\n"
+        f"Username: {username}\n\n"
+        f"Invited By: {inviter_text}\n"
+        f"Balance: {format_ks(int(user['balance']))} Ks\n"
+        f"Total Referrals: {int(user['total_referrals'])}\n\n"
+        f"Join Verified: {'✅ Yes' if user['is_join_verified'] else '❌ No'}\n"
+        f"Referral Reward Given: {'✅ Yes' if user['referral_reward_given'] else '❌ No'}\n"
+        f"Created At: {created_at}"
+    )
+    await message.answer(text)
+
+
+@router.message(Command("addbalance"))
+async def admin_addbalance(message: Message) -> None:
+    if not message.from_user or not is_admin(message.from_user.id):
+        await message.answer("❌ ဒီ command ကို Admin များသာ အသုံးပြုနိုင်ပါသည်။")
+        return
+
+    parts = (message.text or "").split(maxsplit=3)
+    if len(parts) < 3:
+        await message.answer("အသုံးပြုပုံ: /addbalance <user_id> <amount> <message optional>")
+        return
+
+    try:
+        user_id = int(parts[1])
+        amount = int(parts[2])
+    except ValueError:
+        await message.answer("❌ user_id နဲ့ amount က number ဖြစ်ရပါမည်။")
+        return
+
+    if amount <= 0:
+        await message.answer("❌ amount က 0 ထက်ကြီးရပါမည်။")
+        return
+
+    note = parts[3].strip() if len(parts) >= 4 else ""
+    new_balance = await add_manual_balance(user_id, amount)
+
+    if new_balance is None:
+        await message.answer("❌ User မတွေ့ပါ။ /userinfo နဲ့ user_id မှန်မမှန် စစ်ပါ။")
+        return
+
+    notify_status = "မပို့ပါ"
+    if note:
+        try:
+            await message.bot.send_message(
+                user_id,
+                (
+                    "✅ Balance ထည့်ပေးပြီးပါပြီ။\n\n"
+                    f"Amount: {format_ks(amount)} Ks\n"
+                    f"New Balance: {format_ks(new_balance)} Ks\n\n"
+                    f"Message: {note}"
+                ),
+            )
+            notify_status = "ပို့ပြီးပါပြီ"
+        except Exception as exc:
+            notify_status = f"ပို့မရပါ ({exc})"
+
+    await message.answer(
+        "✅ Balance ထည့်ပြီးပါပြီ။\n\n"
+        f"User ID: {user_id}\n"
+        f"Added: {format_ks(amount)} Ks\n"
+        f"New Balance: {format_ks(new_balance)} Ks\n"
+        f"User Notify: {notify_status}"
+    )
+
+
+@router.message(Command("removebalance"))
+async def admin_removebalance(message: Message) -> None:
+    if not message.from_user or not is_admin(message.from_user.id):
+        await message.answer("❌ ဒီ command ကို Admin များသာ အသုံးပြုနိုင်ပါသည်။")
+        return
+
+    parts = (message.text or "").split(maxsplit=3)
+    if len(parts) < 3:
+        await message.answer("အသုံးပြုပုံ: /removebalance <user_id> <amount> <message optional>")
+        return
+
+    try:
+        user_id = int(parts[1])
+        amount = int(parts[2])
+    except ValueError:
+        await message.answer("❌ user_id နဲ့ amount က number ဖြစ်ရပါမည်။")
+        return
+
+    if amount <= 0:
+        await message.answer("❌ amount က 0 ထက်ကြီးရပါမည်။")
+        return
+
+    note = parts[3].strip() if len(parts) >= 4 else ""
+    status, balance_value = await remove_manual_balance(user_id, amount)
+
+    if status == "not_found":
+        await message.answer("❌ User မတွေ့ပါ။ /userinfo နဲ့ user_id မှန်မမှန် စစ်ပါ။")
+        return
+
+    if status == "insufficient":
+        await message.answer(
+            "❌ User balance မလုံလောက်ပါ။\n\n"
+            f"User ID: {user_id}\n"
+            f"Current Balance: {format_ks(int(balance_value or 0))} Ks\n"
+            f"Remove Amount: {format_ks(amount)} Ks"
+        )
+        return
+
+    new_balance = int(balance_value or 0)
+
+    notify_status = "မပို့ပါ"
+    if note:
+        try:
+            await message.bot.send_message(
+                user_id,
+                (
+                    "⚠️ Balance ဖြတ်ပြီးပါပြီ။\n\n"
+                    f"Amount: {format_ks(amount)} Ks\n"
+                    f"New Balance: {format_ks(new_balance)} Ks\n\n"
+                    f"Message: {note}"
+                ),
+            )
+            notify_status = "ပို့ပြီးပါပြီ"
+        except Exception as exc:
+            notify_status = f"ပို့မရပါ ({exc})"
+
+    await message.answer(
+        "✅ Balance ဖြတ်ပြီးပါပြီ။\n\n"
+        f"User ID: {user_id}\n"
+        f"Removed: {format_ks(amount)} Ks\n"
+        f"New Balance: {format_ks(new_balance)} Ks\n"
+        f"User Notify: {notify_status}"
+    )
+
+
+@router.message(Command("broadcast"))
+async def admin_broadcast(message: Message) -> None:
+    if not message.from_user or not is_admin(message.from_user.id):
+        await message.answer("❌ ဒီ command ကို Admin များသာ အသုံးပြုနိုင်ပါသည်။")
+        return
+
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip():
+        await message.answer("အသုံးပြုပုံ: /broadcast <message>")
+        return
+
+    broadcast_text = parts[1].strip()
+    rows = await get_pool().fetch("SELECT user_id FROM users ORDER BY created_at ASC")
+
+    if not rows:
+        await message.answer("ℹ️ Broadcast ပို့ရန် user မရှိသေးပါ။")
+        return
+
+    await message.answer(f"📣 Broadcast စတင်ပို့နေပါပြီ...\nTotal Users: {len(rows)}")
+
+    success = 0
+    failed = 0
+
+    for row in rows:
+        target_user_id = int(row["user_id"])
+        try:
+            await message.bot.send_message(target_user_id, broadcast_text)
+            success += 1
+        except Exception as exc:
+            failed += 1
+            logger.warning("Broadcast failed for user %s: %s", target_user_id, exc)
+
+        await asyncio.sleep(0.05)
+
+    await message.answer(
+        "✅ Broadcast ပြီးပါပြီ။\n\n"
+        f"Total: {len(rows)}\n"
+        f"Success: {success}\n"
+        f"Failed: {failed}"
+    )
+    
 # ============================================================
 # MENU HANDLERS
 # ============================================================
